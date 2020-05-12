@@ -1,0 +1,649 @@
+---
+title: "COVID-19 Socio-Economic Analysis"
+author: "Paul Martinuzzi & Lucienne Devitt"
+date: "5/12/2020"
+output: html_notebook
+runtime: shiny
+subtitle: MSCS 264 B Final Project
+resource_files:
+- il-covid-counts-by-zipcode-4_17_2020.csv
+- neighborhood_poverty.csv
+- county_by_zip.csv
+---
+
+**COVID-19 cases as of April 17, 2020**
+
+Today, Illinois has one of the highest number of cases of COVID-19 in the country.  In this project we aim to:
+```{r, echo=FALSE}
+tags$ol(
+    tags$li("Locate the county which holds the majority of COVID-19 cases in Illinois"), 
+    tags$li("Explore whether certain races are being disproportionately affected by COVID-19 in Illinois"), 
+    tags$li("Understand whether certain socioeconomic variables could be used to predict the severity of COVID-19 cases in a given neighborhood."))
+```
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(cowplot)
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(stringr)
+library(shiny)
+library(AER)
+library(htmlwidgets)
+library(ggrepel)
+library(rsconnect)
+```
+
+
+```{r, include=FALSE, warning=FALSE}
+#read in data
+data.df <- read_csv("~/Mscs 264 S20/Project/Lucienne_Paul/il-covid-counts-by-zipcode-4_17_2020.csv")
+
+data.df2 <- read_csv("~/Mscs 264 S20/Project/Lucienne_Paul/neighborhood_poverty.csv")
+
+countyzip <- read_csv("~/Mscs 264 S20/Project/Lucienne_Paul/county_by_zip.csv")
+```
+
+```{r, include=FALSE, warning=FALSE}
+#change data columns for easy join and remove unneeded column
+countyzip <- countyzip %>% 
+  select(1,2,4)
+names(countyzip)[1] <- "zip"
+
+data.df <- left_join(data.df, countyzip, by = c("zip" = "zip"))
+names(data.df)[25] <- "subregion"
+```
+
+```{r, include=FALSE, warning=FALSE}
+#load in county data for IL from {maps} package
+counties <- map_data("county")
+il_county <- subset(counties, region == "illinois")
+
+#join county+long+lat.df, with our data
+lefty <- left_join(il_county, data.df, by="subregion")
+```
+
+```{r, include=FALSE, warning=FALSE}
+#if else to create region labels
+data.df <- 
+  mutate(data.df, 
+         Region=ifelse(subregion=='cook',"Chicago Area",
+                       ifelse(subregion=='dupage',"Chicago Area",
+                              ifelse(subregion=='will',"Chicago Area",
+                                     ifelse(subregion=='kane',"Chicago Area",
+                                            ifelse(subregion=='lake',"Chicago Area", 'Outer
+                                                   Counties'))))))
+```
+
+```{r, include=FALSE, warning=FALSE}
+#creating merged data set with covid cases by neighborhood (instead of just zip code)
+#renaming columns in il covid cases (data.df)
+names(data.df)[4] <- "Unkown_Age"
+names(data.df)[5] <- "Age_lessthan_20"
+names(data.df)[6] <- "Age20-29"
+names(data.df)[7] <- "Age30-39"
+names(data.df)[8] <- "Age40-49"
+names(data.df)[9] <- "Age50-59"
+names(data.df)[10] <- "Age60-69"
+names(data.df)[11] <- "Age70-79"
+names(data.df)[12] <- "Age80plus"
+names(data.df)[13] <- "Male"
+names(data.df)[14] <- "Female"
+names(data.df)[15] <- "Gender_unknown"
+names(data.df)[16] <- "Race_White"
+names(data.df)[17] <- "Race_Black"
+names(data.df)[18] <- "Race_Unkown"
+names(data.df)[19] <- "Race_Other"
+names(data.df)[20] <- "Race_Asian"
+names(data.df)[21] <- "Race_Hispanic"
+names(data.df)[22] <- "Race_NHPI"
+names(data.df)[23] <- "Race_AIAN"
+#filter out just cook county of covid cases
+cook_covid<-data.df%>%
+  filter(City=="Chicago")
+
+cook_covid<-cook_covid%>%
+  mutate("Neighborhood_Name"=c("Loop", "Loop", "Loop", "Loop","Lower West Side","New City","Near North Side","Near North Side","Near West Side","Lake View","Lake View","Hyde Park","Douglas","South Chicago","Irving Park","Chatham","Auburn Gresham","Englewood","West Town","South Lawndale","West Garfield Park","Lincoln Square","Rogers Park","Roseland","Chicago Lawn","Jefferson Park","Edison Park","Brighton Park","South Deering","Dunning","West Englewood","Woodlawn","Clearing","Belmont Cragin","Uptown","Portage Park","Beverly","Austin","West Ridge","Forest Glen","Logan Square","South Shore","Humboldt Park","Ashburn","Grand Boulevard","Near North Side","Mount Greenwood","Norwood Park","Lake View","West Ridge","Edgewater","Near West Side"))
+
+
+#renaming columns in data.df2 (poverty) to correct names
+names(data.df2)[1] <- "Community_Area_number"
+names(data.df2)[2] <- "Neighborhood_Name"
+names(data.df2)[3] <- "Percent_Crowded_Housing"
+names(data.df2)[4] <- "Percent Households_Below_Poverty"
+names(data.df2)[5] <- "Percent_16over_Unemployed"
+names(data.df2)[6] <- "Percent_25over_No_HS"
+names(data.df2)[7] <- "Percent_Under_16_Above_64"
+names(data.df2)[8] <- "Per_Capita_Income"
+names(data.df2)[9] <- "Hardship_Index"
+
+data.df2%>%
+  filter(row_number() !=1)
+
+
+#dataset of merged poverty and covid cases by neighborhood and zipcode for chicago!
+covid_neigh_dem <- left_join(cook_covid, data.df2, by="Neighborhood_Name")
+
+names(covid_neigh_dem)[3] <- "totalcount"
+
+names(covid_neigh_dem)[16] <- "whitecount"
+names(covid_neigh_dem)[17] <- "blackcount"
+names(covid_neigh_dem)[20] <- "asiancount"
+names(covid_neigh_dem)[21] <- "hispcount"
+```
+
+```{r, include=FALSE, warning=FALSE}
+covidFINAL <- covid_neigh_dem %>% mutate(
+asianREALprop=ifelse(Neighborhood_Name=="Loop",12,
+ifelse(Neighborhood_Name=="Lower West Side",20,
+ifelse(Neighborhood_Name=="New City",3,
+ifelse(Neighborhood_Name=="Near North Side",10,
+ifelse(Neighborhood_Name=="Near West Side",12,
+ifelse(Neighborhood_Name=="Lake View",8,
+ifelse(Neighborhood_Name=="Hyde Park",10,
+ifelse(Neighborhood_Name=="Douglas",16,
+ifelse(Neighborhood_Name=="South Chicago",3,
+ifelse(Neighborhood_Name=="Irving Park",8,
+ifelse(Neighborhood_Name=="Chatham",1,
+ifelse(Neighborhood_Name=="Auburn Gresham",0,
+ifelse(Neighborhood_Name=="Englewood",0,
+ifelse(Neighborhood_Name=="West Town",3,
+ifelse(Neighborhood_Name=="South Lawndale",2,
+ifelse(Neighborhood_Name=="West Garfield Park",0,
+ifelse(Neighborhood_Name=="Lincoln Square",10,
+ifelse(Neighborhood_Name=="Rogers Park",5,
+ifelse(Neighborhood_Name=="Roseland",0,
+ifelse(Neighborhood_Name=="Chicago Lawn",1,
+ifelse(Neighborhood_Name=="Jefferson Park",9,
+ifelse(Neighborhood_Name=="Edison Park",3,
+ifelse(Neighborhood_Name=="Brighton Park",8,
+ifelse(Neighborhood_Name=="South Deering",0,
+ifelse(Neighborhood_Name=="Dunning",4,
+ifelse(Neighborhood_Name=="West Englewood",0,
+ifelse(Neighborhood_Name=="Woodlawn",4,
+ifelse(Neighborhood_Name=="Clearing",1,
+ifelse(Neighborhood_Name=="Belmont Cragin",2,
+ifelse(Neighborhood_Name=="Uptown",11,
+ifelse(Neighborhood_Name=="Portage Park",5,
+ifelse(Neighborhood_Name=="Beverly",0,
+ifelse(Neighborhood_Name=="Austin",1,
+ifelse(Neighborhood_Name=="West Ridge",21,
+ifelse(Neighborhood_Name=="Forest Glen",10,
+ifelse(Neighborhood_Name=="Logan Square",3,
+ifelse(Neighborhood_Name=="South Shore",0,
+ifelse(Neighborhood_Name=="Humboldt Park",2,
+ifelse(Neighborhood_Name=="Ashburn",1,
+ifelse(Neighborhood_Name=="Grand Boulevard",1,
+ifelse(Neighborhood_Name=="Mount Greenwood",2,
+ifelse(Neighborhood_Name=="Norwood Park",3,
+ifelse(Neighborhood_Name=="Edgewater",12,
+99999))))))))))))))))))))))))))))))))))))))))))))
+```
+```{r, include=FALSE, warning=FALSE}
+covidFINAL <- covidFINAL %>% mutate(
+whiteREALprop=ifelse(Neighborhood_Name=="Loop",50,
+ifelse(Neighborhood_Name=="Lower West Side",11,
+ifelse(Neighborhood_Name=="New City",13,
+ifelse(Neighborhood_Name=="Near North Side",67,
+ifelse(Neighborhood_Name=="Near West Side",37,
+ifelse(Neighborhood_Name=="Lake View",77,
+ifelse(Neighborhood_Name=="Hyde Park",39,
+ifelse(Neighborhood_Name=="Douglas",26,
+ifelse(Neighborhood_Name=="South Chicago",6,
+ifelse(Neighborhood_Name=="Irving Park",43,
+ifelse(Neighborhood_Name=="Chatham",10,
+ifelse(Neighborhood_Name=="Auburn Gresham",1,
+ifelse(Neighborhood_Name=="Englewood",1,
+ifelse(Neighborhood_Name=="West Town",53,
+ifelse(Neighborhood_Name=="South Lawndale",6,
+ifelse(Neighborhood_Name=="West Garfield Park",2,
+ifelse(Neighborhood_Name=="Lincoln Square",62,
+ifelse(Neighborhood_Name=="Rogers Park",45,
+ifelse(Neighborhood_Name=="Roseland",1,
+ifelse(Neighborhood_Name=="Chicago Lawn",5,
+ifelse(Neighborhood_Name=="Jefferson Park",67,
+ifelse(Neighborhood_Name=="Edison Park",84,
+ifelse(Neighborhood_Name=="Brighton Park",12,
+ifelse(Neighborhood_Name=="South Deering",10,
+ifelse(Neighborhood_Name=="Dunning",62,
+ifelse(Neighborhood_Name=="West Englewood",2,
+ifelse(Neighborhood_Name=="Woodlawn",12,
+ifelse(Neighborhood_Name=="Clearing",40,
+ifelse(Neighborhood_Name=="Belmont Cragin",15,
+ifelse(Neighborhood_Name=="Uptown",51,
+ifelse(Neighborhood_Name=="Portage Park",47,
+ifelse(Neighborhood_Name=="Beverly",55,
+ifelse(Neighborhood_Name=="Austin",7,
+ifelse(Neighborhood_Name=="West Ridge",41,
+ifelse(Neighborhood_Name=="Forest Glen",73,
+ifelse(Neighborhood_Name=="Logan Square",45,
+ifelse(Neighborhood_Name=="South Shore",2,
+ifelse(Neighborhood_Name=="Humboldt Park",9,
+ifelse(Neighborhood_Name=="Ashburn",12,
+ifelse(Neighborhood_Name=="Grand Boulevard",5,
+ifelse(Neighborhood_Name=="Mount Greenwood",73,
+ifelse(Neighborhood_Name=="Norwood Park",83,
+ifelse(Neighborhood_Name=="Edgewater",55,
+99999))))))))))))))))))))))))))))))))))))))))))))
+```
+```{r, include=FALSE, warning=FALSE}
+covidFINAL <- covidFINAL %>% mutate(
+hispanicREALprop=ifelse(Neighborhood_Name=="Loop",23,
+ifelse(Neighborhood_Name=="Lower West Side",59,
+ifelse(Neighborhood_Name=="New City",59,
+ifelse(Neighborhood_Name=="Near North Side",9,
+ifelse(Neighborhood_Name=="Near West Side",17,
+ifelse(Neighborhood_Name=="Lake View",9,
+ifelse(Neighborhood_Name=="Hyde Park",7,
+ifelse(Neighborhood_Name=="Douglas",6,
+ifelse(Neighborhood_Name=="South Chicago",15,
+ifelse(Neighborhood_Name=="Irving Park",43,
+ifelse(Neighborhood_Name=="Chatham",2,
+ifelse(Neighborhood_Name=="Auburn Gresham",2,
+ifelse(Neighborhood_Name=="Englewood",3,
+ifelse(Neighborhood_Name=="West Town",26,
+ifelse(Neighborhood_Name=="South Lawndale",77,
+ifelse(Neighborhood_Name=="West Garfield Park",2,
+ifelse(Neighborhood_Name=="Lincoln Square",18,
+ifelse(Neighborhood_Name=="Rogers Park",24,
+ifelse(Neighborhood_Name=="Roseland",4,
+ifelse(Neighborhood_Name=="Chicago Lawn",49,
+ifelse(Neighborhood_Name=="Jefferson Park",21,
+ifelse(Neighborhood_Name=="Edison Park",7,
+ifelse(Neighborhood_Name=="Brighton Park",77,
+ifelse(Neighborhood_Name=="South Deering",28,
+ifelse(Neighborhood_Name=="Dunning",31,
+ifelse(Neighborhood_Name=="West Englewood",15,
+ifelse(Neighborhood_Name=="Woodlawn",4,
+ifelse(Neighborhood_Name=="Clearing",56,
+ifelse(Neighborhood_Name=="Belmont Cragin",77,
+ifelse(Neighborhood_Name=="Uptown",16,
+ifelse(Neighborhood_Name=="Portage Park",44,
+ifelse(Neighborhood_Name=="Beverly",6,
+ifelse(Neighborhood_Name=="Austin",17,
+ifelse(Neighborhood_Name=="West Ridge",20,
+ifelse(Neighborhood_Name=="Forest Glen",13,
+ifelse(Neighborhood_Name=="Logan Square",44,
+ifelse(Neighborhood_Name=="South Shore",2,
+ifelse(Neighborhood_Name=="Humboldt Park",60,
+ifelse(Neighborhood_Name=="Ashburn",39,
+ifelse(Neighborhood_Name=="Grand Boulevard",9,
+ifelse(Neighborhood_Name=="Mount Greenwood",10,
+ifelse(Neighborhood_Name=="Norwood Park",11,
+ifelse(Neighborhood_Name=="Edgewater",16,
+"Other"))))))))))))))))))))))))))))))))))))))))))))
+```
+
+```{r, include=FALSE, warning=FALSE}
+covidFINAL <- covidFINAL %>% mutate(
+blackREALprop=ifelse(Neighborhood_Name=="Loop",13,
+ifelse(Neighborhood_Name=="Lower West Side",8,
+ifelse(Neighborhood_Name=="New City",24,
+ifelse(Neighborhood_Name=="Near North Side",11,
+ifelse(Neighborhood_Name=="Near West Side",31,
+ifelse(Neighborhood_Name=="Lake View",3,
+ifelse(Neighborhood_Name=="Hyde Park",39,
+ifelse(Neighborhood_Name=="Douglas",50,
+ifelse(Neighborhood_Name=="South Chicago",75,
+ifelse(Neighborhood_Name=="Irving Park",3,
+ifelse(Neighborhood_Name=="Chatham",86,
+ifelse(Neighborhood_Name=="Auburn Gresham",96,
+ifelse(Neighborhood_Name=="Englewood",94,
+ifelse(Neighborhood_Name=="West Town",14,
+ifelse(Neighborhood_Name=="South Lawndale",15,
+ifelse(Neighborhood_Name=="West Garfield Park",95,
+ifelse(Neighborhood_Name=="Lincoln Square",6,
+ifelse(Neighborhood_Name=="Rogers Park",24,
+ifelse(Neighborhood_Name=="Roseland",93,
+ifelse(Neighborhood_Name=="Chicago Lawn",44,
+ifelse(Neighborhood_Name=="Jefferson Park",1,
+ifelse(Neighborhood_Name=="Edison Park",5,
+ifelse(Neighborhood_Name=="Brighton Park",1,
+ifelse(Neighborhood_Name=="South Deering",60,
+ifelse(Neighborhood_Name=="Dunning",2,
+ifelse(Neighborhood_Name=="West Englewood",82,
+ifelse(Neighborhood_Name=="Woodlawn",77,
+ifelse(Neighborhood_Name=="Clearing",1,
+ifelse(Neighborhood_Name=="Belmont Cragin",5,
+ifelse(Neighborhood_Name=="Uptown",19,
+ifelse(Neighborhood_Name=="Portage Park",2,
+ifelse(Neighborhood_Name=="Beverly",37,
+ifelse(Neighborhood_Name=="Austin",75,
+ifelse(Neighborhood_Name=="West Ridge",13,
+ifelse(Neighborhood_Name=="Forest Glen",1,
+ifelse(Neighborhood_Name=="Logan Square",6,
+ifelse(Neighborhood_Name=="South Shore",95,
+ifelse(Neighborhood_Name=="Humboldt Park",27,
+ifelse(Neighborhood_Name=="Ashburn",47,
+ifelse(Neighborhood_Name=="Grand Boulevard",84,
+ifelse(Neighborhood_Name=="Mount Greenwood",14,
+ifelse(Neighborhood_Name=="Norwood Park",0,
+ifelse(Neighborhood_Name=="Edgewater",14,
+"Other"))))))))))))))))))))))))))))))))))))))))))))
+```
+
+```{r, include=FALSE, warning=FALSE}
+covidFINAL <- covidFINAL %>% 
+  group_by(Neighborhood_Name,hispanicREALprop,whiteREALprop,asianREALprop,blackREALprop) %>% 
+  summarise(asiancount= sum(asiancount),totalcount= sum(totalcount),whitecount= sum(whitecount),blackcount= sum(blackcount),hispcount= sum(hispcount))%>% 
+  mutate(asianprop = (asiancount / totalcount) * 100)%>% 
+  mutate(whiteprop = (whitecount / totalcount) * 100)%>% 
+  mutate(blackprop = (blackcount / totalcount) * 100)%>% 
+  mutate(hispprop = (hispcount / totalcount) * 100)%>%  ###NEW PROP CALCULATIONS 05/08
+  mutate(asianprop2 = (asiancount / (asiancount+whitecount+blackcount+hispcount)) * 100)%>% 
+  mutate(whiteprop2 = (whitecount / (asiancount+whitecount+blackcount+hispcount)) * 100)%>% 
+  mutate(blackprop2 = (blackcount / (asiancount+whitecount+blackcount+hispcount)) * 100)%>% 
+  mutate(hispprop2 = (hispcount / (asiancount+whitecount+blackcount+hispcount)) * 100)%>%
+  mutate(norace_count = (totalcount-(whitecount+blackcount+asiancount+hispcount)))%>%
+mutate(norace_prop = ((totalcount-(whitecount+blackcount+asiancount+hispcount))/(totalcount)) * 100)
+
+covidFINAL <- left_join(covidFINAL, data.df2, by="Neighborhood_Name")
+view(covidFINAL)
+
+#Average % of COVID cases that dont have a race associated with them in a neighborhood-->mean=34%
+mean(covidFINAL$norace_prop)
+```
+
+```{r, include=FALSE}
+#create custom map theme
+theme_map <- function(base_size=9, base_family="") 
+  { require(grid)
+  theme_bw(base_size=base_size, base_family=base_family) %+replace%
+    theme(axis.line=element_blank(),
+          axis.text=element_blank(),
+          axis.ticks=element_blank(), axis.title=element_blank(),
+          panel.background=element_blank(), panel.border=element_blank(),
+          panel.grid=element_blank(), panel.spacing=unit(0, "lines"),
+          plot.background=element_blank(), legend.justification = c(0,0),
+          legend.position = c(0,0), plot.title = element_text(size=22), 
+          legend.title = element_text(size = 16), 
+          legend.text = element_text(size = 16)
+    )
+}
+theme_map
+```
+
+```{r, include=FALSE}
+data.df$subregion <- tolower(data.df$subregion)
+
+data.df6 <- data.df %>% group_by(subregion) %>% summarize(confirmed_cases=sum(confirmed_cases))
+
+lefty2 <- left_join(il_county, data.df6, by="subregion")
+```
+
+#####################################
+```{r, echo = FALSE, include=FALSE}
+cook <- lefty2 
+cook$ID <- seq.int(nrow(cook))
+
+cook <- cook %>% filter(subregion=="cook") %>% top_n(1)
+cook <- cook %>% mutate(subregion=ifelse(subregion=="cook", "Cook","IDK"))
+```
+
+```{r, echo=FALSE}
+tags$h1("Where are the majority of COVID-19 cases found in Illinois?")
+```
+
+```{r, echo=FALSE, warning=FALSE}
+renderPlot({
+#plot COVID-19 cases by county in iL
+ggplot(data = lefty2, aes(x = long, y = lat, fill = confirmed_cases, group = group))+
+  geom_polygon(color = "gray90", size = 0.05) + 
+  coord_equal()+ scale_fill_continuous(type = "gradient")+ 
+  labs(fill = "Confirmed COVID-19 cases, by County") + 
+  theme_map() + 
+  guides(fill = guide_legend(nrow = 1)) + 
+  theme(legend.position = "bottom")+
+  geom_polygon(color = "black", fill = NA)+ ggtitle("Confirmed Cases by County in Illinois")+
+  geom_text(cook, mapping=aes(label = subregion, x = long, y = lat), size=3.2, nudge_x = .21, nudge_y = -.059)
+})
+```
+######################
+
+```{r, echo=FALSE}
+tags$h2("Another look at the counties shows that Cook County, location of Chicago Area, has the most confirmed cases of COVID-19.")
+```
+
+```{r, echo=FALSE, warning=FALSE, fig.height=4, fig.width=8}
+renderPlot({
+ggplot(data=data.df, aes(x=subregion, y= confirmed_cases))+
+  geom_col(fill="orange") + 
+  ggtitle("Total Confirmed COVID cases by County") + ylab("Count") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=15))+ 
+  theme(legend.position="none")+ 
+  scale_x_discrete(labels=c("cook"=expression(bold(cook))))+
+  xlab("County")+
+  ylab("COVID-19 Cases")+
+  geom_text(aes(label = "<- 18,888 Total Cases", x = "cook", y = 18800), size=6, nudge_x = 4.4)
+})
+```
+
+**Since the majority of cases appear to be in Cook County, we will focus the rest of our project on analyzing that area.**
+
+```{r, echo=FALSE}
+tags$h2("Are certain races being disproportionately affected by the COVID-19 pandemic?")
+```
+
+**We try to answer this question by showing side by side bar plots of 4 races (Black, White, Asian, Hispanic). The left bar shows, for the selected neighborhood, what percentage of the neighborhood's population is that race. On the right bar we show, of the total COVID-19 cases in the neighborhood, what percentage are from people of that specified race.  Also, it should be noted that the COVID-19 data below only includes cases which had a race associated with them (excluding roughly 34% of data from each neighborhood).**
+
+```{r, echo=FALSE, warning=FALSE}
+selectInput(inputId = "Name", 
+            label = " Choose a Neighborhood:", 
+            choices = unique(covidFINAL$Neighborhood_Name))
+
+renderPlot({
+propdata <- covidFINAL %>%
+  filter(Neighborhood_Name==input$Name)
+#
+p1 <- ggplot(propdata) +
+  geom_col(mapping = aes(Neighborhood_Name, as.numeric(blackREALprop)/100), fill="purple", width = 0.5) +
+  ggtitle("Black % of Neighborhood Total Pop.") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y="Black % of Total Neighborhood Population", x="")+ scale_y_continuous(labels = scales::percent)+
+  geom_label(size=10, aes(x=Neighborhood_Name, y= 1, fill="yellow", label = round(as.numeric(blackREALprop))))+ theme(legend.position="none")
+#
+p2 <- ggplot(propdata) +
+  geom_col(mapping = aes(Neighborhood_Name, as.numeric(blackprop2)/100), fill="darkorange", width = 0.5) +
+  ggtitle("Black % of Neighborhood Total Covid Cases") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y="Black % of Total Neighborhood Covid Cases", x="")+ scale_y_continuous(labels = scales::percent)+
+  geom_label(size=10, aes(x=Neighborhood_Name, y= 1, fill="red",label = round(as.numeric(blackprop2))))+ theme(legend.position="none")
+##
+
+plot_grid(p1, p2)
+})
+
+renderPlot({
+propdata <- covidFINAL %>%
+  filter(Neighborhood_Name==input$Name)
+  
+p123 <- ggplot(propdata) +
+  geom_col(mapping = aes(Neighborhood_Name, as.numeric(whiteREALprop)/100), fill="purple", width = 0.5) +
+  ggtitle("White % of Neighborhood Total Population") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y="White % of Total Neighborhood Population", x="")+ scale_y_continuous(labels = scales::percent)+
+  geom_label(size=10, aes(x=Neighborhood_Name, y= 1, fill="yellow", label = round(as.numeric(whiteREALprop))))+ theme(legend.position="none")
+
+p223 <- ggplot(propdata) +
+  geom_col(mapping = aes(Neighborhood_Name, as.numeric(whiteprop2)/100), fill="darkorange", width = 0.5) +
+  ggtitle("White % of Neighborhood Total Covid Cases") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y="White % of Total Neighborhood Covid Cases", x="")+ scale_y_continuous(labels = scales::percent)+
+  geom_label(size=10, aes(x=Neighborhood_Name, y= 1, fill="red",label = round(as.numeric(whiteprop2))))+ theme(legend.position="none")
+
+plot_grid(p123, p223)
+})
+
+renderPlot({
+propdata <- covidFINAL %>%
+  filter(Neighborhood_Name==input$Name)
+  
+p12 <- ggplot(propdata) +
+  geom_col(mapping = aes(Neighborhood_Name, as.numeric(asianREALprop)/100), fill="purple", width = 0.5) +
+  ggtitle("Asian % of Neighborhood Total Population") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y="Asian % of Total Neighborhood Population", x="")+ scale_y_continuous(labels = scales::percent)+
+  geom_label(size=10, aes(x=Neighborhood_Name, y= 1, fill="yellow", label = round(as.numeric(asianREALprop))))+ theme(legend.position="none")
+
+p22 <- ggplot(propdata) +
+  geom_col(mapping = aes(Neighborhood_Name, as.numeric(asianprop2)/100), fill="darkorange", width = 0.5) +
+  ggtitle("Asian % of Neighborhood Total Covid Cases") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y="Asian % of Total Neighborhood Covid Cases", x="")+ scale_y_continuous(labels = scales::percent)+
+  geom_label(size=10, aes(x=Neighborhood_Name, y= 1, fill="red",label = round(as.numeric(asianprop2))))+ theme(legend.position="none")
+
+plot_grid(p12, p22)
+})
+
+renderPlot({
+propdata <- covidFINAL %>%
+  filter(Neighborhood_Name==input$Name)
+  
+p1234 <- ggplot(propdata) +
+  geom_col(mapping = aes(Neighborhood_Name, as.numeric(hispanicREALprop)/100), fill="purple", width = 0.5) +
+  ggtitle("Hispanic % of Neighborhood Total Population") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y="Hispanic % of Total Neighborhood Population", x="")+ scale_y_continuous(labels = scales::percent)+
+  geom_label(size=10, aes(x=Neighborhood_Name, y= 1, fill="yellow", label = round(as.numeric(hispanicREALprop))))+ theme(legend.position="none")
+
+p2234 <- ggplot(propdata) +
+  geom_col(mapping = aes(Neighborhood_Name, as.numeric(hispprop2)/100), fill="darkorange", width = 0.5) +
+  ggtitle("Hispanic % of Neighborhood Total Covid Cases") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(y="Hispanic % of Total Neighborhood Covid Cases", x="")+ scale_y_continuous(labels = scales::percent)+
+  geom_label(size=10, aes(x=Neighborhood_Name, y= 1, fill="red",label = round(as.numeric(hispprop2))))+ theme(legend.position="none")
+
+plot_grid(p1234, p2234)
+})
+```
+
+Our bar plots above suggest that in many neighborhoods there does appear to be a disproportionate number of COVID-19 cases occurring in black and hispanic communities in Chicago.  For example, in the Beverly neighborhood, where 55% of the population is white and only 37% of the population is black, only 11% of the total COVID-19 cases are white, while 87% are black.  Similarly, in Lincoln Square where 62% of the population is white and only 18% are hispanic, COVID-19 cases are 28% white and 47% hispanic respectively.  
+
+```{r, echo=FALSE}
+tags$h3("Is there a correlation between various socioeconomic descriptors of a neighborhood and the total number of COVID-19 cases there?")
+```
+
+**Note: Each dot in the plots below represents a Chicago neighborhood in Cook County.**
+
+
+**Per Capita Income is defined as average income earned per person in a given neighborhood.**
+
+```{r, echo=FALSE, warning=FALSE}
+outliers1<-covidFINAL%>%
+  filter(Per_Capita_Income<"1200")
+outliers1
+
+renderPlot({
+ggplot(covidFINAL, aes(x=as.numeric(Per_Capita_Income), y=totalcount))+ 
+  geom_point() + geom_smooth(method = "lm", se=FALSE) + labs(title="Per Capita Income ($) Vs. Total COVID-19 cases, by Neighborhood", y="Total Covid Cases", x= "Per Capita Income ($)")+
+  geom_text_repel(data=outliers1, mapping=aes(label=Neighborhood_Name), 
+    box.padding = unit(0.55, "lines"),
+    point.padding = unit(0.5, "lines"),
+    segment.color = 'grey50')
+
+})
+```
+
+**Percent households below poverty line is defined as the a level of personal or family income below a certain threshold value (this threshold value varies depending on how many people are in a household).**
+
+```{r, echo=FALSE, warning=FALSE}
+names(covidFINAL)[23] <- "Poverty"
+
+
+outliers2<-covidFINAL%>%
+  filter(Poverty=="46.6"|Poverty=="41.7")
+view(outliers2)
+
+renderPlot({
+ggplot(covidFINAL, aes(x=as.numeric(Poverty), y=totalcount))+ 
+  geom_point() + 
+    geom_smooth(method = "lm", se=FALSE) + 
+    labs(title="% of Households Below Poverty Line Vs. Total COVID-19 cases, by Neighborhood", y="Total Covid Cases", x= "% of Neighborhood Households Below Poverty Line")+
+    geom_label(mapping = aes(label = Neighborhood_Name), 
+             data = outliers2, 
+             nudge_y = 50, nudge_x= -2, alpha = 0.5, show.legend = FALSE)
+})
+```
+
+
+**Percent crowded housing is defined as the percent of households with the number of occupants exceeding the capacity of the space available.**
+
+```{r, echo=FALSE, warning=FALSE}
+outliers3<-covidFINAL%>%
+  filter(Percent_Crowded_Housing=="15.2"|Percent_Crowded_Housing=="14.4")
+outliers3
+
+renderPlot({
+ggplot(covidFINAL, aes(x=as.numeric(`Percent_Crowded_Housing`), y=totalcount))+ 
+  geom_point() + 
+    geom_smooth(method = "lm", se=FALSE) + labs(title="% of Crowded housing Vs. Total COVID-19 cases, by Neighborhood", y="Total Covid Cases", x= "% of Crowded Housing")+
+    geom_label(mapping = aes(label = Neighborhood_Name), 
+             data = outliers3, 
+             nudge_y = 15, nudge_x=-1, alpha = 0.5, show.legend = FALSE)
+})
+```
+
+**Percent of neighborhood population age 25 and over with no high school diploma.**
+
+```{r, echo=FALSE, warning=FALSE}
+outliers4<-covidFINAL%>%
+  filter(Percent_25over_No_HS=="54.8"|Percent_25over_No_HS=="45.1")
+
+renderPlot({
+ggplot(covidFINAL, aes(x=as.numeric(`Percent_25over_No_HS`), y=totalcount))+ 
+  geom_point() + geom_smooth(method = "lm", se=FALSE) + labs(title="Percent 25+ with No HS diploma Vs. Total COVID-19 cases, by Neighborhood", y="Total Covid Cases", x= "Percent 25+ with No HS diploma")+
+     geom_label(mapping = aes(label = Neighborhood_Name), 
+             data = outliers4, 
+             nudge_y = 20, nudge_x= -3, alpha = 0.5, show.legend = FALSE)
+})
+```
+
+
+
+**Hardship index is defined as a multidimensional measure of community socioeconomic conditions (score 1-100).**
+
+```{r, echo=FALSE, warning=FALSE}
+outliers5<-covidFINAL%>%
+  filter(Hardship_Index>"91")
+
+renderPlot({
+ggplot(covidFINAL, aes(x=as.numeric(Hardship_Index), y=totalcount))+ 
+  geom_point() + geom_smooth(method = "lm", se=FALSE) + labs(title="Hardship Index Vs. Total COVID-19 cases, by Neighborhood", y="Total Covid Cases", x= " Harship Index")+
+     geom_label(mapping = aes(label = Neighborhood_Name), 
+             data = outliers5, 
+             nudge_y = 20, nudge_x= -5, alpha = 0.5, show.legend = FALSE)
+})
+```
+
+
+  COVID-19 cases appear to increase as crowded housing, hardship, lack of education, and poverty also increase. While COVID-19 cases appear to decrease with an increase in income per capita. Both our scatter plots and bar plots above support various media reports of an unbalance occurring in COVID-19 cases both racially, and socioeconomically in Cook County IL: 
+```{r,echo=FALSE}
+(tags$a(href="https://thesouthern.com/news/local/state-and-regional/covid-19-shows-racial-health-disparities-in-illinois/article_14a890fc-9d2b-5b09-8198-5ed14774fbd8.html", "Click here!"))
+```
+
+
+```{r, echo=FALSE}
+tags$h3("We created our final dataset for this project by joining, piping, & manipulating data from these sources:")
+```
+*Illinois COVID-19 data:*
+
+https://www.wbez.org/stories/map-find-the-number-of-covid-19-cases-in-illinois-by-zip-code/90ca85cd-bdf4-423a-a7bc-924fcee9d0f3
+
+*Chicago socioeconomic data:* 
+
+https://data.cityofchicago.org/api/views/kn9c-c2s2/rows.csv?accessType=DOWNLOAD&bom=true&format=true&delimiter=%3B
+
+*Chicago zip codes:*
+
+https://www.unitedstateszipcodes.org/60661/
+
+*Chicago neighborhood socioeconomic data:*
+
+http://www.actforchildren.org/wp-content/uploads/2018/01/Census-Data-by-Chicago-Community-Area-2017.pdf
